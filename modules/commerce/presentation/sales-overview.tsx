@@ -12,6 +12,7 @@ import { Card } from "@/components/ui/card";
 import { PeriodLabel, RangeFields, useReport, useReportingPeriod } from "@/modules/shared/presentation/reporting-period";
 import { salesDimensions, type SalesFilters, type SalesReport } from "../domain/sales-report";
 import { Breakdown, TrendChart } from "@/modules/shared/presentation/report-charts";
+import { currencyFormatter, currencySymbol } from "./currency";
 
 const emptyFilters: SalesFilters = { channel: [], campaign: [], source: [], medium: [] };
 const labels = { channel: "销售渠道", campaign: "UTM Campaign Name", source: "UTM Campaign Source", medium: "UTM Campaign Medium" };
@@ -36,11 +37,11 @@ export default function SalesOverview() {
   const params = new URLSearchParams({ view: "report", ...range });
   for (const key of salesDimensions) for (const value of filters[key]) params.append(key, value);
   const { data, message, loading } = useReport<SalesReport>("/api/commerce/dashboard?" + params, revision);
-  const money = (value?: number | null) => value == null || !data ? "—" : new Intl.NumberFormat(locale, { style: "currency", currency: data.currency }).format(value);
+  const money = (value?: number | null) => value == null || !data ? "—" : currencyFormatter(locale, data.currency).format(value);
   const number = (value?: number | null) => value == null ? "—" : value.toLocaleString(locale);
   const percentage = (value?: number | null) => value == null ? "—" : new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 2 }).format(value);
   const trend = data?.trend ?? [];
-  const currency = data?.currency ?? "";
+  const currency = data ? currencySymbol(locale, data.currency) : "";
 
   function apply() {
     setRange(draft);

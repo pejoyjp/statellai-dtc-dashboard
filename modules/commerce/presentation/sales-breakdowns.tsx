@@ -4,6 +4,7 @@ import { FieldHelp } from "@/components/ui/field-help";
 import { reportCopy } from "./report-copy";
 import { Card } from "@/components/ui/card";
 import { Breakdown, TrendChart } from "@/modules/shared/presentation/report-charts";
+import { currencySymbol } from "./currency";
 import { aggregate, dimension, salesRow, utmFields, variantFields } from "../domain/report-breakdowns";
 import { metricNumber, type AnalyticsRow, type SalesReport } from "../domain/sales-report";
 import { AppliedFilters, FilterOptions } from "./report-filter-options";
