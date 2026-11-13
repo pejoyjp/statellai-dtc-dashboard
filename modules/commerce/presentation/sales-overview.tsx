@@ -101,6 +101,6 @@ export default function SalesOverview() {
     </div>
 
     </section>
-    <SalesBreakdowns key={resetCount} data={data} money={money} number={number} percentage={percentage}/>
+    <SalesBreakdowns key={resetCount} data={data} money={money} number={number} percentage={percentage} currency={currency}/>
   </section>;
 }

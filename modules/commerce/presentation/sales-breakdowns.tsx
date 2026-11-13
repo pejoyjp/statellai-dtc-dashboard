@@ -4,13 +4,12 @@ import { FieldHelp } from "@/components/ui/field-help";
 import { reportCopy } from "./report-copy";
 import { Card } from "@/components/ui/card";
 import { Breakdown, TrendChart } from "@/modules/shared/presentation/report-charts";
-import { currencySymbol } from "./currency";
 import { aggregate, dimension, salesRow, utmFields, variantFields } from "../domain/report-breakdowns";
 import { metricNumber, type AnalyticsRow, type SalesReport } from "../domain/sales-report";
 import { AppliedFilters, FilterOptions } from "./report-filter-options";
 
 type Format = (value?: number | null) => string;
-type Props = { data?: SalesReport; money: Format; number: Format; percentage: Format };
+type Props = { data?: SalesReport; money: Format; number: Format; percentage: Format; currency: string };
 type Selections = Record<string, string[]>;
 const [sku, variant] = variantFields;
 const code = "discount_code";
@@ -109,7 +108,7 @@ function series(rows: AnalyticsRow[] | null, field: string, bucket: string, metr
   return ordered.slice(0, limit).map(label => ({ label: label ?? unknown, points: groups.get(label)! }));
 }
 
-function SkuBreakdown({ data, money, number }: Props) {
+function SkuBreakdown({ data, money, number, currency }: Props) {
   const { t } = useLanguage();
   const [selected, setSelected] = useState<Selections>({});
   const rows = data?.sku?.map(row => ({ [sku]: row.sku, [variant]: row.variant, sales: row.sales, quantity: row.quantity }));
@@ -127,7 +126,7 @@ function SkuBreakdown({ data, money, number }: Props) {
       [sku]: choices(rows, sku, readSales), [variant]: choices(rows, variant, readSales),
     }}/>
     <div className="report-pair">
-      <TrendChart period={data?.period} title={t(reportCopy.skuTrend.title)} description={t(reportCopy.skuTrend.help)} leftUnit={data?.currency ?? ""} formatLeft={money}
+      <TrendChart period={data?.period} title={t(reportCopy.skuTrend.title)} description={t(reportCopy.skuTrend.help)} leftUnit={currency} formatLeft={money}
         series={series(points, sku, bucket, "sales", ranked, t("无 SKU"), selected[sku]?.length || 5)}/>
       <Breakdown title={t(reportCopy.skuMix.title)} description={t(reportCopy.skuMix.help)} rows={slices(skuTotals, sku, "sales")} money={money} emptyLabel={t("无 SKU")} pie/>
     </div>
@@ -136,7 +135,7 @@ function SkuBreakdown({ data, money, number }: Props) {
   </section>;
 }
 
-function DiscountBreakdown({ data, money, number }: Props) {
+function DiscountBreakdown({ data, money, number, currency }: Props) {
   const { t } = useLanguage();
   const [selected, setSelected] = useState<Selections>({});
   const bucket = data?.period.bucket ?? "day";
@@ -155,7 +154,7 @@ function DiscountBreakdown({ data, money, number }: Props) {
       options={Object.fromEntries([code, ...variantFields].map(field => [field, choices(all, field, sales)]))}/>
     <div className="report-pair">
       <Breakdown title={t(reportCopy.discountMix.title)} description={t(reportCopy.discountMix.help)} rows={slices(totals, code, "sales")} money={money} emptyLabel={t("未标记")} pie/>
-      <TrendChart period={data?.period} title={t(reportCopy.discountTrend.title)} description={t(reportCopy.discountTrend.help)} leftUnit={data?.currency ?? ""} formatLeft={money}
+      <TrendChart period={data?.period} title={t(reportCopy.discountTrend.title)} description={t(reportCopy.discountTrend.help)} leftUnit={currency} formatLeft={money}
         series={series(points, code, bucket, "sales", choices(rows, code, sales), t("未标记"), selected[code]?.length || 5)}/>
     </div>
     {totals && totals.length > 5 && !selected[code]?.length && <p className="report-period">{t("趋势默认显示前 5 项，筛选后可查看其他项目。")}</p>}
