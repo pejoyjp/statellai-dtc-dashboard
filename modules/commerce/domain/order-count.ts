@@ -1,5 +1,6 @@
-/** 活动开始于 2026-11-12 15:00（北京时间）。 */
-export const CAMPAIGN_START_UTC = "2026-11-12T07:00:00Z";
+import { CAMPAIGN_START_UTC } from "../../shared/domain/reporting-period";
+export { CAMPAIGN_START_UTC };
+
 const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
 
 export function resolveOrderCount(scopes: string[], count: { count: number; precision: string } | null | undefined, now: number) {

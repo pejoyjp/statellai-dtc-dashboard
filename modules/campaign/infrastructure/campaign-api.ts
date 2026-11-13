@@ -22,3 +22,19 @@ export async function fetchCampaignSummary(email: string): Promise<ApiResult> {
 }
 
 export const campaignGateway: CampaignGateway = { fetchStats: fetchCampaignStats, fetchSummary: fetchCampaignSummary };
+
+export async function fetchCampaignJourney(scope: import("../domain/journey").JourneyScope): Promise<ApiResult> {
+  const base = process.env.CAMPAIGN_API_URL, key = process.env.DASHBOARD_API_KEY;
+  if (!base || !key) return { status: 503, body: null };
+  const params = new URLSearchParams({ view: "journey", start: scope.start, end: scope.end });
+  for (const email of scope.excludeEmails) params.append("excludeEmail", email);
+  for (const domain of scope.excludeDomains) params.append("excludeDomain", domain);
+  try {
+    const response = await fetch(`${base.replace(/\/$/, "")}/dashboard/stats?${params}`, {
+      headers: { "x-dashboard-key": key }, cache: "no-store", signal: AbortSignal.timeout(12000),
+    });
+    return { status: response.status, body: response.ok ? await response.json() : null };
+  } catch {
+    return { status: 502, body: null };
+  }
+}

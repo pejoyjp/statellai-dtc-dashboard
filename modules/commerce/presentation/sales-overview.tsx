@@ -1,27 +1,105 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+
+import { useState } from "react";
 import { useLanguage } from "@/components/language";
 import { Button } from "@/components/ui/button";
+import { FieldHelp } from "@/components/ui/field-help";
+import { reportCopy } from "./report-copy";
+import { SalesBreakdowns } from "./sales-breakdowns";
+import { SalesSectionNav } from "./sales-section-nav";
+import { AppliedFilters, FilterOptions } from "./report-filter-options";
 import { Card } from "@/components/ui/card";
-import { Icon } from "@/components/layout/icon";
-type Dashboard = { status: string; message?: string; orderError?: string | null; shop?: { name: string; currencyCode: string }; sales?: Record<string, string>; sessions?: Record<string, string>; trend?: { day: string; total_sales: string }[]; updatedAt?: string };
-function Metric({ icon, label, value, detail, tone }: { icon: string; label: string; value: string; detail: string; tone: string }) {
-  return <Card className="metric"><div className="metric-top"><span className={`metric-icon ${tone}`}><Icon name={icon}/></span><span className="metric-more">···</span></div><p>{label}</p><strong>{value}</strong><div className="metric-detail">{detail}</div></Card>;
-}
+import { PeriodLabel, RangeFields, useReport, useReportingPeriod } from "@/modules/shared/presentation/reporting-period";
+import { salesDimensions, type SalesFilters, type SalesReport } from "../domain/sales-report";
+import { Breakdown, TrendChart } from "@/modules/shared/presentation/report-charts";
+
+const emptyFilters: SalesFilters = { channel: [], campaign: [], source: [], medium: [] };
+const labels = { channel: "销售渠道", campaign: "UTM Campaign Name", source: "UTM Campaign Source", medium: "UTM Campaign Medium" };
+const metrics = [
+  ["sales", "总销售额", "Shopify 总销售额加回销售冲销，包含适用的税费与运费。"],
+  ["sessions", "在线商店访问次数", "所选范围内 Shopify 记录的在线商店会话次数，同一访客可产生多次会话。"],
+  ["conversion", "转化率", "完成结账的会话数 ÷ 在线商店会话总数。"],
+  ["aov", "平均订单金额", "Shopify AOV 为扣除折扣后的商品销售额 ÷ 订单数，不计下单后的调整。"],
+  ["orders", "订单数", "所选范围内的 Shopify 订单数，排除已取消订单和销售冲销记录。"],
+  ["bounce", "跳出率", "只浏览一页就离开的会话数 ÷ 在线商店会话总数。"],
+  ["newCustomers", "新客数", "Shopify new_customers。所选结果中完成首次购买的客户人数。"],
+] as const;
+
 export default function SalesOverview() {
   const { t, lang } = useLanguage();
-  const [data, setData] = useState<Dashboard | null>(null);
-  const [loading, setLoading] = useState(true);
-  const refresh = useCallback(async () => { setLoading(true); try { const res = await fetch("/api/commerce/dashboard", { cache: "no-store" }); setData(await res.json()); } catch { setData({ status: "error", message: "无法获取看板数据，请稍后重试。" }); } finally { setLoading(false); } }, []);
-  useEffect(() => { fetch("/api/commerce/dashboard", { cache: "no-store" }).then(res => res.json()).then(setData).catch(() => setData({ status: "error", message: "无法获取看板数据，请稍后重试。" })).finally(() => setLoading(false)); }, []);
-  const money = (v?: string) => v == null ? "—" : new Intl.NumberFormat("en-US", { style: "currency", currency: data?.shop?.currencyCode || "USD", maximumFractionDigits: 2 }).format(Number(v));
-  const number = (v?: string) => v == null ? "—" : Number(v).toLocaleString("en-US");
-  const rows = data?.trend || [];
-  const max = Math.max(...rows.map((r) => Number(r.total_sales) || 0), 1);
-  return <section id="performance"><div className="sales-toolbar"><div className="date-pill"><Icon name="calendar"/> 2026.11.12 15:00 <span>—</span>{t("至今")} <small>{t("北京时间")}</small></div><Button variant="outline" className="refresh" onClick={refresh} disabled={loading}><Icon name="refresh" size={16}/>{loading ? t("刷新中") : t("刷新数据")}</Button></div>
-      <div className="section-title"><div><span className="section-number">01</span><h2>{t('核心指标')}</h2><span className="section-sub">KEY METRICS</span></div><span className="period">{t('活动开始至今 ')}<Icon name="arrow" size={13}/></span></div>
-      <div className="metrics"><Metric icon="chart" label={t("总销售额")} value={money(data?.sales?.total_sales)} detail={t("Shopify · 活动期间")} tone="purple"/><Metric icon="bag" label={t("订单数")} value={number(data?.sales?.orders)} detail={data?.orderError ? t(data.orderError) : t("不含已取消订单")} tone="blue"/><Metric icon="mouse" label={t("在线商店访问次数")} value={number(data?.sessions?.sessions)} detail={t("Shopify · 活动期间")} tone="orange"/><Metric icon="users" label={t("每有效订单销售额")} value={data?.sales?.orders && Number(data.sales.orders) > 0 && data.sales.total_sales != null ? money(String(Number(data.sales.total_sales) / Number(data.sales.orders))) : "—"} detail={t("Shopify 总销售额 / 未取消订单数")} tone="green"/></div>
-      <div className="dashboard-grid"><Card className="trend-card"><div className="card-heading"><div><div className="card-kicker">PERFORMANCE OVERVIEW</div><h3>{t('销售趋势 ')}<span>↗</span></h3><p>{t('追踪活动期间的每日销售表现')}</p></div><span className="tag">● &nbsp;{t("总销售额")}</span></div><div className="chart-area">{rows.length ? <div className="bars">{rows.map((r, i) => <div className="bar-item" key={`${r.day}-${i}`} title={`${r.day}: ${money(r.total_sales)}`}><div className="bar" style={{ height: `${Math.max(2, (Number(r.total_sales) / max) * 100)}%` }}/><small>{String(r.day).slice(5,10)}</small></div>)}</div> : <div className="empty-chart"><div className="empty-icon"><Icon name="chart" size={23}/></div><b>{loading ? t("正在加载销售趋势") : data?.status === "connected" ? (data.updatedAt && new Date(data.updatedAt).getTime() < Date.parse("2026-11-12T07:00:00Z") ? t("活动尚未开始") : t("暂无销售趋势数据")) : t("无法加载销售趋势")}</b><span>{loading ? t("正在查询 Shopify Analytics") : data?.status === "connected" ? (data.updatedAt && new Date(data.updatedAt).getTime() < Date.parse("2026-11-12T07:00:00Z") ? t("Shopify 已连接，统计从北京时间 11 月 12 日 15:00 开始") : t("Shopify 已连接，当前统计区间暂无销售记录")) : (data?.message ? t(data.message) : t("请检查 Shopify 连接状态"))}</span></div>}<div className="chart-lines"><span/><span/><span/><span/></div></div><div className="chart-foot"><span>{t('统计周期：2026.11.12 15:00 至今')}</span><span>{t('按天展示 · 北京时间')}</span></div></Card>
-      <Card className="status-card"><div className="card-kicker">DATA CONNECTIONS</div><h3>{t('数据连接')}</h3><p>{t('数据源与接口状态')}</p><div className="connection"><div className="connection-logo shop">S</div><div><b>Shopify Analytics</b><small>{data?.shop?.name || t("店铺分析数据")}</small></div><span className={`status ${data?.status === "connected" ? "good" : "warn"}`}><i/>{loading ? t("连接中") : data?.status === "connected" ? t("已连接") : t("需关注")}</span></div><div className="connection"><div className="connection-logo campaign-logo">✳</div><div><b>Campaign API</b><small>{t('查看下方活动数据')}</small></div><span className="status neutral"><i/>{t('查看状态')}</span></div><div className="notice"><Icon name="info" size={16}/><span>{data?.status === "connected" ? `${lang === "en" ? "Updated: " : "上次更新："}${data.updatedAt ? new Date(data.updatedAt).toLocaleString(lang === "en" ? "en-US" : "zh-CN", { timeZone: "Asia/Shanghai" }) : "—"}` : data?.message ? t(data.message) : t("正在检查 Shopify 连接状态。")}</span></div><div className="status-foot"><span>{t('数据口径')}</span><b>{t('实时查询 ')}<span>↗</span></b></div></Card></div>
+  const locale = lang === "en" ? "en-US" : "zh-CN";
+  const { range, setRange } = useReportingPeriod();
+  const [draft, setDraft] = useState(range);
+  const [filters, setFilters] = useState(emptyFilters);
+  const [resetCount, setResetCount] = useState(0);
+  const [revision, setRevision] = useState(0);
+  const params = new URLSearchParams({ view: "report", ...range });
+  for (const key of salesDimensions) for (const value of filters[key]) params.append(key, value);
+  const { data, message, loading } = useReport<SalesReport>("/api/commerce/dashboard?" + params, revision);
+  const money = (value?: number | null) => value == null || !data ? "—" : new Intl.NumberFormat(locale, { style: "currency", currency: data.currency }).format(value);
+  const number = (value?: number | null) => value == null ? "—" : value.toLocaleString(locale);
+  const percentage = (value?: number | null) => value == null ? "—" : new Intl.NumberFormat(locale, { style: "percent", maximumFractionDigits: 2 }).format(value);
+  const trend = data?.trend ?? [];
+  const currency = data?.currency ?? "";
+
+  function apply() {
+    setRange(draft);
+    setRevision(value => value + 1);
+  }
+
+  return <section id="performance" className="report-sales">
+    <Card className="sales-global-filter">
+    <div className="sales-global-heading"><h2>{t("全局筛选")}</h2><span>{t("适用于下方所有销售报表。")}</span></div>
+    <form className="report-filters print-control" data-date-filtered={Boolean(range.start || range.end)} onSubmit={event => { event.preventDefault(); apply(); }}>
+      <RangeFields range={draft} period={data?.period} onChange={setDraft}/>
+      {salesDimensions.map(dimension => <FilterOptions key={`${dimension}:${resetCount}`} label={labels[dimension]} values={filters[dimension]}
+        options={data?.options[dimension]} onChange={values => setFilters(current => ({ ...current, [dimension]: values }))}/>)}
+      <div className="report-filter-actions">
+        <Button type="submit">{t("应用日期")}</Button>
+        <Button type="button" variant="outline" onClick={() => {
+          const reset = { start: "", end: "" };
+          setDraft(reset); setRange(reset); setFilters(emptyFilters);
+          setResetCount(count => count + 1);
+          setRevision(value => value + 1);
+        }}>{t("重置全部筛选")}</Button>
+      </div>
+    </form>
+    <PeriodLabel period={data?.period}/>
+    <AppliedFilters items={[
+      ...salesDimensions.map(key => ({ label: labels[key], values: filters[key] })),
+      { label: "自定义日期", values: range.start || range.end ? [
+        `${(range.start || data?.period.start || "—").replace("T", " ")} – ${range.end ? range.end.replace("T", " ") : t("至今")}`,
+      ] : [] },
+    ]}/>
+    </Card>
+    <SalesSectionNav/>
+    {loading && <p role="status">{t("正在获取数据")}</p>}
+    {message && <p className="activity-error" role="alert">{t(message)}</p>}
+    {data && data.period.startUtc > data.period.endUtc && <p className="scope-note">{t("活动尚未开始")}</p>}
+    {data && <p className="report-period">{t("会话仅能按 Shopify 已关联的客户邮箱排除。")}</p>}
+    {data?.sessionChannelUnavailable && <p className="scope-note">{t("所选销售渠道没有对应的 Shopify 在线商店会话数据。")}</p>}
+    <section id="sales-summary" className="sales-module">
+    <div className="section-title"><h2>{t("销售概览")}</h2></div>
+    <div className="sales-kpis">
+      {metrics.map(([key, label, help]) => {
+        const value = data?.metrics[key];
+        const format = key === "sales" || key === "aov" ? money : key === "bounce" || key === "conversion" ? percentage : number;
+        return <Card className={key === "sales" ? "sales-kpi sales-kpi-primary" : "sales-kpi"} key={key}>
+          <div>{t(label)} <FieldHelp label={`${t(label)} · ${t("指标说明")}`} description={t(help)}/></div>
+          <strong>{format(value)}</strong>
+          {key === "orders" && data?.orderHistoryUnavailable && <small>{t("统计起点超过 60 天，需 read_all_orders 权限。")}</small>}
+        </Card>;
+      })}
+    </div>
+    <div className="report-pair">
+      <TrendChart period={data?.period} title={t(reportCopy.overviewTrend.title)} description={t(reportCopy.overviewTrend.help)} leftUnit={currency} formatLeft={money} rightUnit={t("会话")} series={[
+        { label: t("总销售额"), points: trend.map(row => ({ time: row.time, value: row.sales })) },
+        { label: t("在线商店访问次数"), kind: "bars", points: trend.map(row => ({ time: row.time, value: row.sessions })) },
+      ]}/>
+      <Breakdown title={t(reportCopy.overviewMix.title)} description={t(reportCopy.overviewMix.help)} rows={data?.channels} money={money} emptyLabel={t("未标记")} pie/>
+    </div>
+
+    </section>
+    <SalesBreakdowns key={resetCount} data={data} money={money} number={number} percentage={percentage}/>
   </section>;
 }

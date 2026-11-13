@@ -22,6 +22,14 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 - `modules/shared/` 只放确实跨领域复用的基础设施和应用类型；`components/ui/` 是共享 shadcn/ui 组件，`components/layout/` 是布局；不要为了形式创建没有职责的层或跨领域直接访问对方的基础设施。
 - 新功能先确定领域及规则，再添加用例、适配器、路由和界面。更改 API 契约时检查旧客户端并维护兼容层。
 
+## 界面规范
+
+- 以 [shadcn/ui](https://ui.shadcn.com/docs/components) 为界面基准。优先复用 `components/ui/` 的 Card、Button、Badge、Alert 及主题变量，新增通用组件也放在该目录。
+- 同组图表使用统一网格、卡片间距、标题基线和绘图区尺寸。鼠标悬浮、键盘聚焦和触屏操作应立即反馈数据，打印保留图表、图例和当前筛选。
+- 销售战报以总销售额为主指标，核心指标和活动指标提供可聚焦的计算口径提示。
+- 报表全局筛选覆盖销售概览、SKU、折扣码和流量。流量的引荐渠道是模块内筛选，使用 Shopify 的 `referring_channel`。
+- 数值表格按统一规则对齐，同一指标使用固定色相，当前表格中的较大数值用较深色阶表示。SKU 明细默认按总销售额从高到低排列，缺失值置底。
+
 ## 页面与 API 路由
 
 - `/`：汇总，可打印；`/sales`：销售；`/campaign`：活动；`/health`：网站健康；`/customers`：用户查询。导航必须真实跳转并支持移动端，中英文切换在路由切换后保持有效。
@@ -29,8 +37,10 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## 数据口径与集成约定
 
-- Shopify 销售起点为 2026-11-12 15:00 北京时间（`2026-11-12T07:00:00Z`），订单数排除取消订单；超过 Shopify 60 天读取窗口、缺少 `read_all_orders` 时不可将不完整数量显示为完整值。
-- 活动服务器累计数包含活动全部历史，不等同于 Shopify 起点；今日按服务器返回的北京时间口径。性能指标是最近 30 个自然日的 Shopify P75；可访问性检查只代表服务端对店铺首页的 HTTP 探测。
+- 销售报表使用 Shopify 店铺时区和日期范围，默认保留 2026-11-12 15:00 北京时间（`2026-11-12T07:00:00Z`）的开始时刻。销售报表用 `view=report`。活动页面用 `view=activity` 读取原有服务器统计，独立于销售筛选。活动页通过 `view=emails` 单独读取 Shopify 默认黑五周期的邮箱名单。`view=journey` 保留供按周期统计的活动接口使用。无 `view` 参数的旧契约继续兼容。
+- 新销售报表使用 `total_sales + abs(total_sales_reversals)`，AOV 和新客数使用 Shopify 口径，SKU 使用净销量。订单数排除取消订单；超过 Shopify 60 天读取窗口、缺少 `read_all_orders` 时不可将不完整数量显示为完整值。
+- 新报表排除 `163.com`、`satellai.com`、`qq.com` 三个邮箱域名，`DASHBOARD_INTERNAL_EMAILS` 追加已确认的完整地址。Shopify 按已关联的客户邮箱过滤。拼音候选仅供核对，活动页面保留服务器原有汇总口径，按邮箱规则过滤最近动态。按周期和邮箱过滤的旅程接口约定见 README。
+- 旧活动接口的累计数包含活动全部历史，今日按服务器返回的北京时间口径。性能指标是最近 30 个自然日的 Shopify P75；可访问性检查只代表服务端对店铺首页的 HTTP 探测。
 - 所有密钥只从服务端环境变量读取，禁止输出到日志、浏览器、源码和版本库；不向真实活动抽奖、注册或订单写入接口发送测试请求。
 - 保留现有 API 返回结构、错误状态和中英文文案；不可用的数据展示缺失或错误，不得伪造 0 或示例数据。打印应使用当前筛选周期并保留当前数据。
 

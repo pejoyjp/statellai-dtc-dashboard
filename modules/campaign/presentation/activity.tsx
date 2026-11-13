@@ -1,50 +1,150 @@
 "use client";
-import { useLanguage } from "@/components/language";
-import { useCallback, useEffect, useState } from "react";
-import { Card } from "@/components/ui/card";
 
-type Counts = { registrations: number; draws: number; players: number; wins: number; misses: number; cappedUsers?: number };
-type Point = { bucket: string; registrations: number; draws: number; wins: number };
-type Stats = { generatedAt: string; campaignStartedAt: string | null; limit: number; totals: Counts; today: Counts; rates: { playRate: number; winRate: number }; prizes: Record<string, { total: number; today: number }>; prizeRules: Record<string, { discountAmount: number; minimumSpend: number; discountCode: string }>; series: Point[]; recent: { type: string; email: string; at: string; prize?: string | null }[] };
-const kpis: { key: keyof Counts; label: string }[] = [{ key: "registrations", label: "累计注册" }, { key: "draws", label: "累计抽奖" }, { key: "players", label: "参与人数" }, { key: "wins", label: "中奖次数" }, { key: "misses", label: "未中奖次数" }, { key: "cappedUsers", label: "次数用满人数" }];
-const choices = [{ label: "最近 7 天", query: "granularity=day&days=7" }, { label: "最近 30 天", query: "granularity=day&days=30" }, { label: "最近 24 小时", query: "granularity=hour&hours=24" }, { label: "最近 7 天（小时）", query: "granularity=hour&hours=168" }];
-function dateTime(date: string) { return new Date(date).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }); }
-function Trend({ series }: { series: Point[] }) {
-  const { t } = useLanguage();
-  if (!series.length) return <div className="activity-empty">{t('该时段暂无趋势数据')}</div>;
-  const max = Math.max(1, ...series.flatMap(p => [p.registrations, p.draws, p.wins]));
-  const width = 700, height = 160, pad = 8;
-  const coordinates = (key: "registrations" | "draws" | "wins") => series.map((point, i) => `${pad + (series.length === 1 ? 0 : i * (width - 2 * pad) / (series.length - 1))},${height - pad - point[key] / max * (height - 2 * pad)}`).join(" ");
-  return <div className="activity-trend"><div className="activity-trend-grid"><span/><span/><span/><span/></div><svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" role="img" aria-label={t("注册量、抽奖次数和中奖次数趋势")}><polyline points={coordinates("registrations")} className="line-register"/><polyline points={coordinates("draws")} className="line-draw"/><polyline points={coordinates("wins")} className="line-win"/></svg><div className="trend-labels"><span>{series[0].bucket}</span><span>{series[series.length - 1].bucket}</span></div></div>;
-}
+import { useEffect, useState } from "react";
+import { useLanguage } from "@/components/language";
+import { FieldHelp } from "@/components/ui/field-help";
+import { Card, CardHeader, CardContent } from "@/components/ui/card";
+import { useReport } from "@/modules/shared/presentation/reporting-period";
+import { internalEmailDomains } from "@/modules/shared/domain/internal-emails";
+import { TrendChart } from "@/modules/shared/presentation/report-charts";
+import type { getActivityEmailList } from "../application/get-activity-email-list";
+import type { withActivityEmailReview } from "../domain/activity-stats";
+
+const periods = [
+  { label: "最近 7 天", query: "granularity=day&days=7" },
+  { label: "最近 30 天", query: "granularity=day&days=30" },
+  { label: "最近 24 小时", query: "granularity=hour&hours=24" },
+  { label: "最近 7 天（小时）", query: "granularity=hour&hours=168" },
+];
+
+const metrics = [
+  ["registrations", "累计注册", "活动服务器记录的注册人数。累计覆盖全部历史，今日按北京时间。"],
+  ["players", "参与人数", "至少抽奖一次的用户数，同一用户在对应周期内计一次。"],
+  ["draws", "累计抽奖", "活动服务器记录的抽奖总次数，重复参与按实际抽奖次数计。"],
+  ["wins", "中奖次数", "产生奖品的抽奖次数。同一用户的多次中奖分别计数。"],
+  ["misses", "未中奖次数", "未产生奖品的抽奖次数。同一用户的多次未中奖分别计数。"],
+  ["cappedUsers", "次数用满人数", "累计达到活动服务器设定抽奖次数上限的用户数。"],
+] as const;
+
 export default function Activity() {
   const { t, lang } = useLanguage();
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [error, setError] = useState("");
-  const [choice, setChoice] = useState(choices[0].query);
-  const [loading, setLoading] = useState(true);
-  const load = useCallback(async (signal?: AbortSignal) => {
-    try { const response = await fetch(`/api/campaign/stats?${choice}`, { cache: "no-store", signal }); const result = await response.json(); if (!response.ok) throw new Error(result.message || "统计数据获取失败"); setStats(result); setError(""); }
-    catch (err) { if (err instanceof Error && err.name === "AbortError") return; setError(err instanceof Error ? err.message : "统计数据获取失败"); }
-    finally { if (!signal?.aborted) setLoading(false); }
-  }, [choice]);
+  const [period, setPeriod] = useState(periods[0].query);
+  const [revision, setRevision] = useState(0);
+  const { data, message, loading } = useReport<ReturnType<typeof withActivityEmailReview>>(
+    "/api/campaign/stats?view=activity&" + period, revision,
+  );
   useEffect(() => {
-    const controller = new AbortController();
-    const initial = window.setTimeout(() => { if (document.visibilityState === "visible") void load(controller.signal); }, 0);
-    const interval = window.setInterval(() => { if (document.visibilityState === "visible") void load(controller.signal); }, 10000);
-    const onVisible = () => { if (document.visibilityState === "visible") void load(controller.signal); };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => { controller.abort(); window.clearTimeout(initial); window.clearInterval(interval); document.removeEventListener("visibilitychange", onVisible); };
-  }, [load]);
-  const percentage = (n?: number) => n == null ? "—" : `${(n * 100).toFixed(1)}%`;
+    if (loading) return;
+    const refresh = () => {
+      if (document.visibilityState === "visible") setRevision(value => value + 1);
+    };
+    const timer = window.setTimeout(refresh, 10000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [loading, revision]);
+
+  const { data: emailList, loading: loadingEmails } = useReport<Awaited<ReturnType<typeof getActivityEmailList>>>(
+    "/api/campaign/stats?view=emails", 0,
+  );
+  const emails = [...new Set([...(data?.internalEmails ?? []), ...(emailList?.internalEmails ?? [])])].sort();
+  const suspectedEmails = [...new Set([...(data?.suspectedEmails ?? []), ...(emailList?.suspectedEmails ?? [])])]
+    .filter(email => !emails.includes(email)).sort();
+  const emailEmpty = loadingEmails ? "正在获取数据" : emailList?.complete ? "当前周期暂无匹配地址。" : "内部邮箱名单暂不可用。";
+  const series = data?.series ?? [];
+  const recent = data?.recent;
+  const rates = data?.rates;
+  const trendMetrics = [["registrations", "注册量"], ["draws", "抽奖次数"], ["wins", "中奖次数"]] as const;
+  const formatter = new Intl.NumberFormat(lang === "zh" ? "zh-CN" : "en-US", { style: "percent", maximumFractionDigits: 1 });
+  const dateTime = (value: string) => new Intl.DateTimeFormat(lang === "zh" ? "zh-CN" : "en-US", {
+    timeZone: "Asia/Shanghai", dateStyle: "short", timeStyle: "short",
+  }).format(new Date(value));
+  const today = (value?: number) => `${t("今日")} ${value?.toLocaleString() ?? "—"}`;
+
   return <section id="campaign" className="activity-section">
-    <div className="section-title campaign-title"><div><span className="section-number">03</span><h2>{t('活动表现')}</h2><span className="section-sub">CAMPAIGN PERFORMANCE</span></div><span className="period">{loading ? t("正在获取数据") : stats && !error ? `${lang === "en" ? "Updated" : "更新于"} ${dateTime(stats.generatedAt)}` : t("连接异常")}</span></div>
-    <div className="scope-note">{t("活动累计数据由服务器提供，包含全部历史记录")}{stats?.campaignStartedAt ? `${lang === "en" ? " (First record: " : "（最早记录："}${dateTime(stats.campaignStartedAt)}${lang === "en" ? ")" : "）"}` : ""} {t("与上方 Shopify 的 11 月 12 日 15:00 起统计口径不同。") }</div>
-    {error && <div className="activity-error" role="alert">{t(error)}{stats ? t("；以下显示上次成功获取的数据。") : t("，请检查活动服务器配置。")}</div>}
-    <div className="activity-kpis">{kpis.map(({ key, label }) => <Card className="activity-kpi" key={key}><span>{key === "cappedUsers" && stats?.limit ? (lang === "en" ? `Users at ${stats.limit}-play limit` : `用满 ${stats.limit} 次人数`) : t(label)}</span><strong>{stats?.totals[key]?.toLocaleString() ?? "—"}</strong><small>{key === "cappedUsers" ? t("累计") : `${t("今日")} ${stats?.today[key]?.toLocaleString() ?? "—"}`}</small></Card>)}</div>
-    <div className="activity-grid"><Card className="activity-chart-card"><div className="card-heading"><div><div className="card-kicker">CAMPAIGN TREND</div><h3>{t('活动趋势')}</h3><p>{t('关注注册、抽奖与中奖的变化')}</p></div><span className="print-period">{t(choices.find(item => item.query === choice)?.label || "")}</span><select aria-label={t("活动趋势周期")} className="period-select" value={choice} onChange={e => setChoice(e.target.value)}>{choices.map(item => <option key={item.query} value={item.query}>{t(item.label)}</option>)}</select></div><div className="legend"><span className="reg">{t('注册量')}</span><span className="draw">{t('抽奖次数')}</span><span className="win">{t('中奖次数')}</span></div>{stats ? <Trend series={stats.series}/> : <div className="activity-empty">{loading ? t("正在加载活动趋势…") : t("暂无活动趋势")}</div>}</Card>
-    <Card className="activity-rate-card"><div className="card-kicker">CAMPAIGN HEALTH</div><h3>{t('参与与中奖')}</h3><p>{t('累计活动表现')}</p><div className="rate-row"><div><span>{t('参与率')}</span><strong>{percentage(stats?.rates.playRate)}</strong><small>{t('参与人数 / 注册人数')}</small></div><div className="rate-track"><i style={{ width: `${Math.min(100, (stats?.rates.playRate ?? 0) * 100)}%` }}/></div></div><div className="rate-row"><div><span>{t('中奖率')}</span><strong>{percentage(stats?.rates.winRate)}</strong><small>{t('中奖次数 / 抽奖次数')}</small></div><div className="rate-track mint"><i style={{ width: `${Math.min(100, (stats?.rates.winRate ?? 0) * 100)}%` }}/></div></div></Card></div>
-    <div className="activity-grid activity-bottom"><Card className="prizes-card"><div className="card-kicker">REWARDS BREAKDOWN</div><h3>{t('奖品统计')}</h3><p>{t('各奖档累计与今日发放情况')}</p><div className="prize-list">{["S", "A", "B", "C"].map(tier => { const prize = stats?.prizes[tier], rule = stats?.prizeRules[tier]; return <div className="prize-row" key={tier}><span className={`prize-badge tier-${tier}`}>{tier}</span><div><b>{rule ? lang === "en" ? `$${rule.discountAmount} off $${rule.minimumSpend}` : `满 $${rule.minimumSpend} 减 $${rule.discountAmount}` : lang === "en" ? `Tier ${tier} reward` : `${tier} 档奖励`}</b><small>{rule?.discountCode || t("等待奖品规则")}</small></div><div className="prize-count"><b>{prize?.total ?? "—"}</b><small>{t("今日")} {prize?.today ?? "—"}</small></div></div>; })}</div></Card>
-    <Card className="recent-card"><div className="card-kicker">RECENT ACTIVITY</div><h3>{t('最近动态')}</h3><p>{t('最近 20 条注册和抽奖记录 · 北京时间')}</p><div className="recent-list">{stats?.recent.length ? stats.recent.map((item, i) => <div className="recent-row" key={`${item.at}-${i}`}><span className={`recent-dot ${item.type === "register" ? "register" : "draw-dot"}`}/><div><b>{item.type === "register" ? t("新用户注册") : item.prize ? lang === "en" ? `Won tier ${item.prize}` : `抽中 ${item.prize} 档奖励` : t("参与抽奖")}</b><small>{item.email}</small></div><time>{dateTime(item.at)}</time></div>) : <div className="activity-empty">{loading ? t("正在加载…") : t("暂无动态")}</div>}</div></Card></div>
+    <div className="section-title"><h2>{t("活动表现")}</h2></div>
+    <p className="report-period">{t("活动累计数据由服务器提供，包含全部历史记录")} · {t("北京时间")}</p>
+    <p className="report-period">{t("活动服务器汇总包含内部记录。最近动态已按邮箱规则过滤。")}</p>
+    {message && <p className="activity-error" role="alert">{t(message)}</p>}
+    {loading && !data && <p role="status">{t("正在获取数据")}</p>}
+    <div className="activity-kpis">
+      {metrics.map(([key, label, help]) => <Card className="activity-kpi" key={key}>
+        <span>{key === "cappedUsers" && data?.limit
+          ? lang === "en" ? `Users at ${data.limit}-play limit` : `用满 ${data.limit} 次人数`
+          : t(label)} <FieldHelp label={`${t(label)} · ${t("指标说明")}`} description={t(help)}/></span><strong>{data?.totals?.[key]?.toLocaleString() ?? "—"}</strong>
+        {key !== "cappedUsers" && <small>{today(data?.today?.[key])}</small>}
+      </Card>)}
+    </div>
+    <div className="report-pair">
+      <TrendChart title={t("活动趋势")} leftUnit={t("次数")} action={<>
+        <span className="print-period">{t(periods.find(item => item.query === period)!.label)}</span>
+        <select aria-label={t("活动趋势周期")} className="period-select" value={period} onChange={event => setPeriod(event.target.value)}>
+          {periods.map(item => <option key={item.query} value={item.query}>{t(item.label)}</option>)}
+        </select>
+      </>} series={trendMetrics.map(([key, label]) => ({
+        label: t(label), points: series.map(row => ({
+          time: row.bucket, value: row[key],
+        })) }))}/>
+      <Card className="report-card report-chart-card">
+        <CardHeader className="report-card-header"><h3>{t("参与与中奖")}</h3></CardHeader>
+        <CardContent className="report-card-body">
+          <dl className="campaign-detail-list">
+            <div>
+              <dt>{t("参与率")} <FieldHelp label={t("参与率说明")}
+                description={t("累计参与人数 ÷ 累计注册人数 × 100%。参与人数按至少抽奖一次的用户去重。")}/></dt>
+              <dd>{typeof rates?.playRate === "number" ? formatter.format(rates.playRate) : "—"}</dd>
+            </div>
+            <div>
+              <dt>{t("中奖率")} <FieldHelp label={t("中奖率说明")}
+                description={t("累计中奖次数 ÷ 累计抽奖次数 × 100%。同一用户多次抽奖时，每次都计入抽奖次数，中奖的场次也分别计入中奖次数。")}/></dt>
+              <dd>{typeof rates?.winRate === "number" ? formatter.format(rates.winRate) : "—"}</dd>
+            </div>
+          </dl>
+        </CardContent>
+      </Card>
+    </div>
+    <div className="report-pair">
+      <Card className="report-card">
+        <CardHeader className="report-card-header"><h3>{t("奖品统计")}</h3></CardHeader>
+        <CardContent className="report-card-body">
+          <dl className="campaign-detail-list">{["S", "A", "B", "C"].map(tier => {
+            const rule = data?.prizeRules?.[tier];
+            return <div key={tier}><dt><b>{tier}</b>{rule && <>
+              <small>{lang === "en" ? `$${rule.discountAmount} off $${rule.minimumSpend}` : `满 $${rule.minimumSpend} 减 $${rule.discountAmount}`}</small>
+              <small>{rule.discountCode}</small>
+            </>}</dt>
+              <dd>{data?.prizes?.[tier]?.total?.toLocaleString() ?? "—"} <small>{today(data?.prizes?.[tier]?.today)}</small></dd></div>;
+          })}</dl>
+        </CardContent>
+      </Card>
+      <Card className="report-card">
+        <CardHeader className="report-card-header"><h3>{t("最近动态")}</h3></CardHeader>
+        <CardContent className="report-card-body">
+          {recent?.length ? <ul className="campaign-recent">{recent.map((event, index) => <li key={index}>
+            <div><strong>{t(event.type === "register" ? "新用户注册" : "参与抽奖")}{event.prize ? ` · ${event.prize}` : ""}</strong><small>{event.email}</small></div>
+            <time dateTime={event.at}>{dateTime(event.at)}</time>
+          </li>)}</ul> : <p className="report-empty">{t(recent ? "暂无动态" : "数据暂不可用")}</p>}
+        </CardContent>
+      </Card>
+    </div>
+    <div className="report-pair">
+      <div className="scope-note">
+        <strong>{t("已排除的内部邮箱")}</strong>
+        <p>{t("排除域名")} · {internalEmailDomains.join(", ")}</p>
+        <p>{t("完整地址来自 Shopify 黑五报表、最近活动记录和已配置名单。")}</p>
+        {emails.length ? <ul className="report-emails">{emails.map(email => <li key={email}>{email}</li>)}</ul>
+          : <p>{t(emailEmpty)}</p>}
+        {emailList && !emailList.complete && <p>{t("Shopify 邮箱名单可能不完整。")}</p>}
+      </div>
+      <div className="scope-note">
+        <strong>{t("疑似内部邮箱")}</strong>
+        <p>{t("根据邮箱用户名中的拼音筛选，待人工确认。")}</p>
+        {suspectedEmails.length ? <ul className="report-emails">
+          {suspectedEmails.map(email => <li key={email}>{email}</li>)}
+        </ul> : <p>{t(emailEmpty)}</p>}
+      </div>
+    </div>
   </section>;
 }
