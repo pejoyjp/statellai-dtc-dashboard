@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState } from "react";
 import { useLanguage } from "@/components/language";
 import { Button } from "@/components/ui/button";
+import { DateTimePicker } from "@/components/ui/date-time-picker";
 import type { ReportingPeriod } from "../domain/reporting-period";
 
 type Range = { start: string; end: string };
@@ -41,10 +42,10 @@ export function useReport<T>(url: string, revision: number) {
 }
 
 export function RangeFields({ range, period, onChange }: { range: Range; period?: ReportingPeriod; onChange(range: Range): void }) {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
   return <>
-    <label>{t("开始时间")}<input type="datetime-local" step="1" value={range.start || period?.start || ""} onChange={event => onChange({ ...range, start: event.target.value })}/></label>
-    <label>{t("结束时间")} <small>{t("留空表示至今")}</small><input type="datetime-local" step="1" value={range.end} onChange={event => onChange({ ...range, end: event.target.value })}/></label>
+    <DateTimePicker label={t("开始时间")} language={lang} value={range.start || period?.start || ""} onChange={value => onChange({ ...range, start: value })}/>
+    <DateTimePicker label={t("结束时间")} language={lang} value={range.end} clearable onChange={value => onChange({ ...range, end: value })}/>
   </>;
 }
 

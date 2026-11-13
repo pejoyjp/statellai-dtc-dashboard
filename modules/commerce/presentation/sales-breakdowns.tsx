@@ -51,8 +51,8 @@ function Controls({ fields, options, selected, setSelected }: {
 }
 
 const metricColors: Record<string, string> = {
-  sales: "#4f46e5", quantity: "#0f766e", sessions: "#2563eb", bounce: "#be123c",
-  duration: "#7e22ce", cart: "#b45309", checkout: "#0369a1",
+  sales: "var(--chart-1)", quantity: "var(--metric-quantity)", sessions: "var(--metric-sessions)", bounce: "var(--metric-bounce)",
+  duration: "var(--metric-duration)", cart: "var(--metric-cart)", checkout: "var(--metric-checkout)",
 };
 
 function Table({ title, help, fields, rows, sort, formats, compact = false }: {
