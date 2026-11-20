@@ -1,12 +1,14 @@
 import { useState, type CSSProperties } from "react";
 import { useLanguage } from "@/components/language";
 import { FieldHelp } from "@/components/ui/field-help";
+import { skuLineColor } from "@/modules/shared/presentation/chart-series";
 import { reportCopy } from "./report-copy";
 import { Card } from "@/components/ui/card";
 import { Breakdown, TrendChart } from "@/modules/shared/presentation/report-charts";
 import { aggregate, dimension, salesRow, utmFields, variantFields } from "../domain/report-breakdowns";
 import { metricNumber, type AnalyticsRow, type SalesReport } from "../domain/sales-report";
 import { AppliedFilters, FilterOptions } from "./report-filter-options";
+import { columnTotal, nextSort, sortAnalyticsRows, type ColumnSort } from "./table-summary";
 
 type Format = (value?: number | null) => string;
 type Props = { data?: SalesReport; money: Format; number: Format; percentage: Format };
@@ -17,14 +19,14 @@ const page = "landing_page_path";
 const channel = "referring_channel";
 const trafficFields = [channel, ...utmFields] as const;
 const columns: Record<string, string> = {
-  [channel]: "引荐渠道", [sku]: "SKU", [variant]: "变体名称", [code]: "折扣码", [page]: "Page path",
+  [channel]: "引荐渠道", [sku]: "SKU", [variant]: "变体名称", [code]: "折扣码", [page]: "落地页",
   utm_source: "UTM Source", utm_medium: "UTM Medium", utm_campaign: "UTM Campaign",
   sales: "总销售额", quantity: "净销量", sessions: "会话", bounce: "跳出率",
   duration: "平均浏览时长", cart: "加购会话", checkout: "开始结账会话",
 };
 
 function sortRows(rows: AnalyticsRow[] | null, field: string) {
-  return rows ? [...rows].sort((a, b) => (metricNumber(b[field]) ?? -Infinity) - (metricNumber(a[field]) ?? -Infinity)) : null;
+  return rows ? sortAnalyticsRows(rows, field, "desc", true) : null;
 }
 
 function matches(row: AnalyticsRow, selected: Selections, aliases: Record<string, string> = {}) {
@@ -55,11 +57,14 @@ const metricColors: Record<string, string> = {
   duration: "#7e22ce", cart: "#b45309", checkout: "#0369a1",
 };
 
-function Table({ title, help, fields, rows, sort, formats, compact = false }: {
-  title: string; help: string; compact?: boolean; fields: readonly string[]; rows: AnalyticsRow[] | null; sort: string; formats: Record<string, Format>;
+function Table({ title, help, fields, rows, sort, formats, compact = false, weights = {} }: {
+  title: string; help: string; compact?: boolean; fields: readonly string[]; rows: AnalyticsRow[] | null; sort: string;
+  formats: Record<string, Format>; weights?: Record<string, string>;
 }) {
   const { t } = useLanguage();
-  const sorted = sortRows(rows, sort);
+  const [override, setOverride] = useState<ColumnSort | null>(null);
+  const sorting = override ?? { field: sort, direction: "desc" as const };
+  const sorted = rows ? sortAnalyticsRows(rows, sorting.field, sorting.direction, Boolean(formats[sorting.field])) : null;
   const ranges = Object.fromEntries(Object.keys(formats).map(field => {
     const values = (sorted ?? []).flatMap(row => {
       const value = metricNumber(row[field]);
@@ -67,12 +72,20 @@ function Table({ title, help, fields, rows, sort, formats, compact = false }: {
     });
     return [field, { min: Math.min(0, ...values), max: Math.max(0, ...values) }];
   }));
+  const labelField = fields.find(field => !formats[field]);
   return <Card className={compact ? "report-card report-table-card report-page-table" : "report-card report-table-card"}>
     <div className="sales-report-title"><h3>{t(title)}</h3><FieldHelp label={`${t(title)} · ${t("指标说明")}`} description={t(help)}/></div>
     {sorted?.length ? <div className="report-table-scroll" role="region" tabIndex={0} aria-label={t(title)}>
-      <table><thead><tr>{fields.map(field => <th key={field} scope="col" data-numeric={Boolean(formats[field])}
-        aria-sort={field === sort ? "descending" : undefined}>{t(columns[field])}{field === sort && <span aria-hidden="true"> ↓</span>}
-      </th>)}</tr></thead>
+      <table><thead><tr>{fields.map(field => {
+        const direction = sorting.field === field ? sorting.direction : undefined;
+        return <th key={field} scope="col" data-numeric={Boolean(formats[field])}
+          aria-sort={direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none"}>
+          <button type="button" onClick={() => setOverride(current => nextSort(current ?? { field: sort, direction: "desc" }, field))}>
+            {t(columns[field])}
+            {direction && <span aria-hidden="true">{direction === "desc" ? "↓" : "↑"}</span>}
+          </button>
+        </th>;
+      })}</tr></thead>
       <tbody>{sorted.map((row, index) => <tr key={index}>{fields.map(field => {
         const value = metricNumber(row[field]);
         const range = ranges[field];
@@ -85,7 +98,10 @@ function Table({ title, help, fields, rows, sort, formats, compact = false }: {
           {formats[field] ? <span className={style ? "report-metric-value" : undefined} style={style}>{formats[field](value)}</span>
             : dimension(row, field) ?? t("未标记")}
         </td>;
-      })}</tr>)}</tbody></table>
+      })}</tr>)}</tbody>
+      <tfoot><tr>{fields.map(field => <td key={field} data-numeric={Boolean(formats[field])}>
+        {formats[field] ? formats[field](columnTotal(sorted, field, weights[field])) : field === labelField ? t("总和") : ""}
+      </td>)}</tr></tfoot></table>
     </div> : <p className="report-empty">{t(rows ? "暂无数据" : "数据暂不可用")}</p>}
   </Card>;
 }
@@ -127,7 +143,7 @@ function SkuBreakdown({ data, money, number }: Props) {
     }}/>
     <div className="report-pair">
       <TrendChart period={data?.period} title={t(reportCopy.skuTrend.title)} description={t(reportCopy.skuTrend.help)} leftUnit={data?.currency ?? ""} formatLeft={money}
-        series={series(points, sku, bucket, "sales", ranked, t("无 SKU"), selected[sku]?.length || 5)}/>
+        series={series(points, sku, bucket, "sales", ranked, t("无 SKU"), selected[sku]?.length || 5).map(item => ({ ...item, color: skuLineColor(item.label) }))}/>
       <Breakdown title={t(reportCopy.skuMix.title)} description={t(reportCopy.skuMix.help)} rows={slices(skuTotals, sku, "sales")} money={money} emptyLabel={t("无 SKU")} pie/>
     </div>
     {ranked.length > 5 && !selected[sku]?.length && <p className="report-period">{t("默认显示销售额最高的 5 个 SKU。")}</p>}
@@ -215,7 +231,7 @@ function TrafficBreakdown({ data, money, number, percentage }: Props) {
   const rankedPages = choices(byPage, page, sessionCount);
   return <section className="sales-module" id="sales-traffic">
     <div className="section-title"><h2>{t("流量表现")}</h2></div>
-    <Controls fields={[...trafficFields, ...variantFields, page]} selected={selected} setSelected={setSelected} options={available}/>
+    <Controls fields={[channel, page, ...utmFields, ...variantFields]} selected={selected} setSelected={setSelected} options={available}/>
     <p className="report-period">{t("销售与净销量按末次非直接点击归因。流量按 Shopify 会话来源及落地页统计。")}</p>
     {productFiltered && <p className="scope-note">{t("Shopify 会话无法按 SKU 或变体筛选。清除商品筛选可查看会话指标。")}</p>}
     <div className="report-pair">
@@ -231,7 +247,8 @@ function TrafficBreakdown({ data, money, number, percentage }: Props) {
     {rankedPages.length > 5 && !selected[page]?.length && <p className="report-period">{t("趋势默认显示前 5 项，筛选后可查看其他项目。")}</p>}
     <Table {...reportCopy.utmTable} fields={[...trafficFields, "sessions", "bounce", "duration", "cart", "checkout", "quantity", "sales"]}
       rows={utmRows} sort={productFiltered ? "sales" : "sessions"}
-      formats={{ ...productFormats, sessions: number, bounce: percentage, duration: value => value == null ? "—" : `${number(Math.round(value))} s` }}/>
+      formats={{ ...productFormats, sessions: number, bounce: percentage, duration: value => value == null ? "—" : `${number(Math.round(value))} s` }}
+      weights={{ bounce: "sessions", duration: "sessions" }}/>
     <p className="report-period">{t("Shopify 会话报表不提供按 UTM、SKU 与变体拆分的加购和结账数。")}</p>
     <Table {...reportCopy.utmProducts} fields={[...trafficFields, ...variantFields, "cart", "checkout", "quantity", "sales"]}
       rows={productRows} sort="sales" formats={productFormats}/>

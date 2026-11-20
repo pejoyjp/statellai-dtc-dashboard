@@ -3,11 +3,12 @@ import { FieldHelp } from "@/components/ui/field-help";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { reportingBucketLabel, type ReportingPeriod } from "../domain/reporting-period";
 import { useLanguage } from "@/components/language";
+import { smoothLine, tooltipOrder } from "./chart-series";
 type Slice = { label: string | null; sales: number | null };
 
 const palette = ["#4f46e5", "#00857a", "#c25d13", "#aa3b7a", "#3674b7", "#6b5c44", "#61782b", "#687286"];
 type Point = { time: string; value: number | null };
-type Series = { label: string; points: Point[]; kind?: "bars" };
+type Series = { label: string; points: Point[]; kind?: "bars"; color?: string };
 
 export function Breakdown({ title, description, rows, money, emptyLabel, metricLabel, pie = false }: {
   title: string; description?: string; rows: Slice[] | null | undefined; money(value?: number | null): string; emptyLabel: string; metricLabel?: string; pie?: boolean;
@@ -17,6 +18,9 @@ export function Breakdown({ title, description, rows, money, emptyLabel, metricL
   const total = positive.reduce((sum, row) => sum + row.sales!, 0);
   const [active, setActive] = useState<Slice | null>(null);
   const colors = new Map(positive.map((row, index) => [row, palette[index % palette.length]]));
+  const listedTotal = rows?.some(row => row.sales != null)
+    ? rows.reduce((sum, row) => sum + (row.sales ?? 0), 0)
+    : null;
   const circumference = 2 * Math.PI * 36;
   let offset = 0;
   const segments = [];
@@ -50,7 +54,9 @@ export function Breakdown({ title, description, rows, money, emptyLabel, metricL
           <span><i style={{ background: colors.get(row) ?? "#d4d4d4" }}/>{row.label ?? emptyLabel}</span>
           <strong>{money(row.sales)}</strong>
         </button>
-      </li>)}</ul>
+      </li>)}
+      <li className="report-breakdown-total"><span>{t("总和")}</span><strong>{money(listedTotal)}</strong></li>
+      </ul>
     </div> : <p className="report-empty">{t(rows ? "暂无数据" : "数据暂不可用")}</p>}
     {pie && rows?.some(row => row.sales != null && row.sales < 0) && <p className="report-period">{t("饼图仅显示正销售额。")}</p>}
     </CardContent>
@@ -82,6 +88,7 @@ export function TrendChart({ title, description, series, leftUnit, rightUnit, ac
   const leftAvailable = series.some(item => item.kind !== "bars" && item.points.some(point => point.value != null));
   const rightAvailable = series.some(item => item.kind === "bars" && item.points.some(point => point.value != null));
   const barWidth = Math.min(24, (right - left) / times.length * 0.75);
+  const seriesColor = (item: Series, index: number) => item.color ?? palette[index % palette.length];
 
   const selected = activeTime && position.has(activeTime) ? activeTime : null;
   return <Card className="report-card report-chart-card">
@@ -90,7 +97,7 @@ export function TrendChart({ title, description, series, leftUnit, rightUnit, ac
     {hasValues ? <>
       {period && <p className="report-period">{t("店铺时区")} · {period.timezone}</p>}
       <ul className="report-legend">{series.map((item, index) => <li key={item.label}>
-        <i className={item.kind === "bars" ? "is-bar" : undefined} style={{ background: palette[index % palette.length] }}/>{item.label}
+        <i className={item.kind === "bars" ? "is-bar" : undefined} style={{ background: seriesColor(item, index) }}/>{item.label}
       </li>)}</ul>
       <div className="report-plot" onPointerLeave={() => setActiveTime(null)} onBlur={() => setActiveTime(null)}>
       <svg className="report-chart" viewBox={`0 0 ${width} ${height}`} role="group" aria-label={title}>
@@ -107,24 +114,20 @@ export function TrendChart({ title, description, series, leftUnit, rightUnit, ac
           </g>;
         })}
         {series.map((item, index) => {
-          const color = palette[index % palette.length];
+          const color = seriesColor(item, index);
           const values = new Map(item.points.map(point => [point.time, point.value]));
           if (item.kind === "bars") return <g key={item.label}>{item.points.map(point => {
             if (point.value == null) return null;
             const row = y(point.value, sessionsRange);
             return <rect key={point.time} x={position.get(point.time)! - barWidth / 2} y={row} width={barWidth} height={Math.max(0, bottom - row)} fill={color} fillOpacity={selected === point.time ? ".9" : ".48"}/>;
           })}</g>;
-          let connected = false;
-          const path = times.map(time => {
+          const path = smoothLine(times.map(time => {
             const value = values.get(time);
-            if (value == null) { connected = false; return ""; }
-            const command = connected ? "L" : "M";
-            connected = true;
-            return `${command}${position.get(time)} ${y(value, salesRange)}`;
-          }).join(" ");
+            return { x: position.get(time)!, y: value == null ? null : y(value, salesRange) };
+          }));
           return <g key={item.label}>
-            <path d={path} stroke={color} strokeWidth="2.5" fill="none"/>
-            {item.points.map(point => point.value == null ? null : <circle key={point.time} cx={position.get(point.time)} cy={y(point.value, salesRange)} r={selected === point.time ? 5 : times.length === 1 ? 4 : 2} fill={color}/>)}
+            <path d={path} stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+            {item.points.map(point => point.value == null ? null : <circle key={point.time} cx={position.get(point.time)} cy={y(point.value, salesRange)} r={selected === point.time ? 4 : times.length === 1 ? 4 : 2.5} fill={color} stroke={selected === point.time ? "#fff" : "none"} strokeWidth={selected === point.time ? 2 : 0}/>)}
           </g>;
         })}
         {tickTimes.map((time, index) => <text key={time} x={position.get(time)} y={bottom + 24}
@@ -147,10 +150,12 @@ export function TrendChart({ title, description, series, leftUnit, rightUnit, ac
       {selected && <div className="report-chart-tooltip" role="tooltip" data-side={position.get(selected)! < width / 2 ? "right" : "left"}>
         <strong>{labelTime(selected)}</strong>
         {period && <small>{period.timezone}</small>}
-        {series.map(item => {
-          const value = item.points.find(point => point.time === selected)?.value;
-          return <div key={item.label}><span>{item.label}</span><b>{value == null ? "—" : item.kind !== "bars" && formatLeft ? formatLeft(value) : value.toLocaleString()}</b></div>;
-        })}
+        {tooltipOrder(series.map((item, index) => ({
+          item, index, value: item.points.find(point => point.time === selected)?.value ?? null,
+        }))).map(({ item, index, value }) => <div key={item.label}>
+          <span><i style={{ background: seriesColor(item, index) }}/>{item.label}</span>
+          <b>{value == null ? "—" : item.kind !== "bars" && formatLeft ? formatLeft(value) : value.toLocaleString()}</b>
+        </div>)}
       </div>}
       </div>
     </> : <p className="report-empty">{t("数据暂不可用")}</p>}
